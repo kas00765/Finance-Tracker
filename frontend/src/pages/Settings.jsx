@@ -70,6 +70,10 @@ export default function Settings() {
 
   return (
     <div>
+      <div className="page-header">
+        <h1 className="page-title">Settings</h1>
+        <p className="page-greeting">Manage your currency and categories.</p>
+      </div>
       <div className="card">
         <h3>Home currency</h3>
         <p className="txn-meta">

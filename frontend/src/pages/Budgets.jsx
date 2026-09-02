@@ -105,6 +105,10 @@ export default function Budgets() {
 
   return (
     <div>
+      <div className="page-header">
+        <h1 className="page-title">Budgets</h1>
+        <p className="page-greeting">Set monthly limits per category and track your progress.</p>
+      </div>
       <div className="card">
         <h3>Monthly budgets</h3>
         <p className="txn-meta">

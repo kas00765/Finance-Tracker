@@ -67,6 +67,10 @@ export default function Reports() {
 
   return (
     <div>
+      <div className="page-header">
+        <h1 className="page-title">Reports</h1>
+        <p className="page-greeting">Filter your transaction history and see trends over time.</p>
+      </div>
       <div className="card">
         <h3>Filters</h3>
         <div className="row">

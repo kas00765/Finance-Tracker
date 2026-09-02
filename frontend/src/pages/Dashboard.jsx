@@ -1,14 +1,28 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar,
   XAxis, YAxis, Legend, LineChart, Line, CartesianGrid,
 } from 'recharts';
+import {
+  Wallet, TrendingUp, TrendingDown, PiggyBank, BarChart3, Flame, Tag,
+  Search as SearchIcon, Receipt, Plus,
+} from 'lucide-react';
 import { api } from '../api.js';
 import { useAuth } from '../App.jsx';
 import { SUPPORTED_CURRENCIES, fetchRates, convertAmount, formatMoney } from '../utils/currency.js';
+import { RANGE_OPTIONS, getRangeDates, rangeLabel } from '../utils/dateRange.js';
 
-const COLORS = ['#667eea', '#764ba2', '#f093fb', '#ff6b6b', '#2ed573', '#feca57'];
-const INCOME_EXPENSE_COLORS = ['#2ed573', '#ff4757'];
+const COLORS = ['#10b981', '#60a5fa', '#f59e0b', '#f472b6', '#a78bfa', '#fb923c'];
+const POSITIVE = '#10b981';
+const NEGATIVE = '#ff6b6b';
+const INCOME_EXPENSE_COLORS = [POSITIVE, NEGATIVE];
+
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
 
 export default function Dashboard() {
   const { homeCurrency } = useAuth();
@@ -16,12 +30,15 @@ export default function Dashboard() {
   const [categories, setCategories] = useState([]);
   const [rates, setRates] = useState(null);
   const [error, setError] = useState('');
+  const [range, setRange] = useState('this-month');
 
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState(homeCurrency);
   const [type, setType] = useState('expense');
   const [categoryId, setCategoryId] = useState('');
   const [note, setNote] = useState('');
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const amountInputRef = useRef(null);
 
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('date-desc');
@@ -35,8 +52,9 @@ export default function Dashboard() {
 
   async function loadAll() {
     try {
+      const { from, to } = getRangeDates(range);
       const [txns, cats, rateData] = await Promise.all([
-        api.getTransactions(),
+        api.getTransactions({ ...(from ? { from } : {}), ...(to ? { to } : {}) }),
         api.getCategories(),
         fetchRates(homeCurrency),
       ]);
@@ -51,7 +69,7 @@ export default function Dashboard() {
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [homeCurrency]);
+  }, [homeCurrency, range]);
 
   async function handleAdd(e) {
     e.preventDefault();
@@ -63,6 +81,7 @@ export default function Dashboard() {
         type,
         categoryId: categoryId || null,
         note,
+        date,
       });
       setAmount('');
       setNote('');
@@ -111,6 +130,11 @@ export default function Dashboard() {
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  function focusAddForm() {
+    amountInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    amountInputRef.current?.focus();
   }
 
   // Every total/chart is computed from amounts converted into the home currency,
@@ -202,77 +226,117 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="stat-grid" style={{ marginBottom: '1.25rem' }}>
-        <div className="card">
-          <div className="stat-label">Total Income</div>
-          <p className="stat-value" style={{ color: '#2ed573' }}>{formatMoney(totalIncome, homeCurrency)}</p>
+      <div className="page-header row between">
+        <div>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="page-greeting">{greeting()} 👋 Here's your financial overview for {rangeLabel(range).toLowerCase()}.</p>
         </div>
+        <select value={range} onChange={(e) => setRange(e.target.value)}>
+          {RANGE_OPTIONS.map((r) => (
+            <option key={r.key} value={r.key}>{r.label}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="stat-grid" style={{ marginBottom: '1.5rem' }}>
         <div className="card">
-          <div className="stat-label">Total Expenses</div>
-          <p className="stat-value" style={{ color: '#ff4757' }}>{formatMoney(totalExpense, homeCurrency)}</p>
-        </div>
-        <div className="card">
-          <div className="stat-label">Balance</div>
+          <div className="row between">
+            <div className="stat-label">Balance</div>
+            <div className="kpi-icon"><Wallet size={16} /></div>
+          </div>
           <p className="stat-value">{formatMoney(totalIncome - totalExpense, homeCurrency)}</p>
+        </div>
+        <div className="card">
+          <div className="row between">
+            <div className="stat-label">Income</div>
+            <div className="kpi-icon"><TrendingUp size={16} /></div>
+          </div>
+          <p className="stat-value" style={{ color: POSITIVE }}>{formatMoney(totalIncome, homeCurrency)}</p>
+        </div>
+        <div className="card">
+          <div className="row between">
+            <div className="stat-label">Expenses</div>
+            <div className="kpi-icon danger"><TrendingDown size={16} /></div>
+          </div>
+          <p className="stat-value" style={{ color: NEGATIVE }}>{formatMoney(totalExpense, homeCurrency)}</p>
+        </div>
+        <div className="card">
+          <div className="row between">
+            <div className="stat-label">Savings Rate</div>
+            <div className="kpi-icon info"><PiggyBank size={16} /></div>
+          </div>
+          <p className="stat-value" style={{ color: savingsRate === null ? undefined : savingsRate >= 0 ? POSITIVE : NEGATIVE }}>
+            {savingsRate === null ? '—' : `${savingsRate.toFixed(1)}%`}
+          </p>
         </div>
       </div>
 
-      <div className="stat-grid" style={{ marginBottom: '1.25rem' }}>
-        <div className="card">
-          <div className="stat-label">Avg Monthly Spending</div>
-          <p className="stat-value">{formatMoney(avgMonthlySpending, homeCurrency)}</p>
+      <h2 className="insights-heading">Insights</h2>
+      <div className="stat-grid" style={{ marginBottom: '1.5rem' }}>
+        <div className="card insight-card">
+          <div className="row between">
+            <div className="stat-label">Avg Monthly Spending</div>
+            <div className="kpi-icon"><BarChart3 size={16} /></div>
+          </div>
+          <p className="stat-value" style={{ fontSize: '1.25rem' }}>{formatMoney(avgMonthlySpending, homeCurrency)}</p>
         </div>
-        <div className="card">
-          <div className="stat-label">Biggest Expense</div>
-          <p className="stat-value" style={{ color: '#ff4757' }}>
+        <div className="card insight-card">
+          <div className="row between">
+            <div className="stat-label">Biggest Expense</div>
+            <div className="kpi-icon danger"><Flame size={16} /></div>
+          </div>
+          <p className="stat-value" style={{ fontSize: '1.25rem', color: NEGATIVE }}>
             {biggestExpense ? formatMoney(biggestExpense.convertedAmount, homeCurrency) : '—'}
           </p>
           {biggestExpense && (
             <div className="txn-meta">{biggestExpense.category_name || biggestExpense.note || 'Uncategorized'}</div>
           )}
         </div>
-        <div className="card">
-          <div className="stat-label">Top Category</div>
-          <p className="stat-value" style={{ fontSize: '1.3rem' }}>{topCategory ? topCategory.category : '—'}</p>
+        <div className="card insight-card">
+          <div className="row between">
+            <div className="stat-label">Top Category</div>
+            <div className="kpi-icon"><Tag size={16} /></div>
+          </div>
+          <p className="stat-value" style={{ fontSize: '1.15rem' }}>{topCategory ? topCategory.category : '—'}</p>
           {topCategory && <div className="txn-meta">{formatMoney(topCategory.total, homeCurrency)}</div>}
-        </div>
-        <div className="card">
-          <div className="stat-label">Savings Rate</div>
-          <p className="stat-value" style={{ color: savingsRate === null ? undefined : savingsRate >= 0 ? '#2ed573' : '#ff4757' }}>
-            {savingsRate === null ? '—' : `${savingsRate.toFixed(1)}%`}
-          </p>
         </div>
       </div>
 
       <div className="card">
-        <h3>Add transaction</h3>
-        <form onSubmit={handleAdd} className="row">
-          <input
-            type="number" step="0.01" placeholder="Amount" value={amount}
-            onChange={(e) => setAmount(e.target.value)} required style={{ width: 110 }}
-          />
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-            {SUPPORTED_CURRENCIES.map((c) => (
-              <option key={c.code} value={c.code}>{c.code}</option>
-            ))}
-          </select>
-          <select value={type} onChange={(e) => setType(e.target.value)}>
-            <option value="expense">Expense</option>
-            <option value="income">Income</option>
-          </select>
-          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            <option value="">No category</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          <input
-            type="text" placeholder="Note (optional)" value={note}
-            onChange={(e) => setNote(e.target.value)} style={{ flex: 1, minWidth: 140 }}
-          />
-          <button type="submit">Add</button>
+        <h3 style={{ marginTop: 0 }}>Add transaction</h3>
+        <form onSubmit={handleAdd}>
+          <div className="add-txn-grid">
+            <div className="row" style={{ gap: '0.5rem' }}>
+              <input
+                ref={amountInputRef}
+                type="number" step="0.01" placeholder="Amount" value={amount}
+                onChange={(e) => setAmount(e.target.value)} required style={{ flex: 1, minWidth: 0 }}
+              />
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)} style={{ width: 90 }}>
+                {SUPPORTED_CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>{c.code}</option>
+                ))}
+              </select>
+            </div>
+            <select value={type} onChange={(e) => setType(e.target.value)}>
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+            </select>
+            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+              <option value="">No category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <input
+              type="text" placeholder="Note (optional)" value={note}
+              onChange={(e) => setNote(e.target.value)} style={{ gridColumn: 'span 2' }}
+            />
+          </div>
+          <button type="submit"><Plus size={16} style={{ verticalAlign: -3, marginRight: 4 }} />Add Transaction</button>
         </form>
-        {error && <p className="error">{error}</p>}
+        {error && <p className="error" style={{ marginTop: '0.6rem' }}>{error}</p>}
       </div>
 
       {byCategory.length > 0 && (
@@ -300,8 +364,8 @@ export default function Dashboard() {
               <YAxis />
               <Tooltip formatter={(v) => formatMoney(v, homeCurrency)} />
               <Legend />
-              <Bar dataKey="income" fill="#2ed573" />
-              <Bar dataKey="expense" fill="#ff4757" />
+              <Bar dataKey="income" fill={POSITIVE} />
+              <Bar dataKey="expense" fill={NEGATIVE} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -316,7 +380,7 @@ export default function Dashboard() {
               <XAxis dataKey="month" />
               <YAxis />
               <Tooltip formatter={(v) => formatMoney(v, homeCurrency)} />
-              <Line type="monotone" dataKey="expense" name="Spending" stroke="#ff4757" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="expense" name="Spending" stroke={NEGATIVE} strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -346,10 +410,13 @@ export default function Dashboard() {
         <div className="row between" style={{ marginBottom: '0.75rem' }}>
           <h3 style={{ margin: 0 }}>Recent transactions</h3>
           <div className="row">
-            <input
-              type="text" placeholder="Search note or category" value={search}
-              onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }}
-            />
+            <div style={{ position: 'relative' }}>
+              <SearchIcon size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input
+                type="text" placeholder="Search note or category" value={search}
+                onChange={(e) => setSearch(e.target.value)} style={{ width: 200, paddingLeft: 32 }}
+              />
+            </div>
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
               <option value="date-desc">Newest first</option>
               <option value="date-asc">Oldest first</option>
@@ -359,7 +426,14 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {transactions.length === 0 && <p>No transactions yet — add your first one above.</p>}
+        {transactions.length === 0 && (
+          <div className="empty-state">
+            <Receipt size={40} className="empty-state-icon" />
+            <h4>No transactions yet</h4>
+            <p>Start tracking your spending by adding your first transaction.</p>
+            <button onClick={focusAddForm}><Plus size={16} style={{ verticalAlign: -3, marginRight: 4 }} />Add Transaction</button>
+          </div>
+        )}
         {transactions.length > 0 && visibleTransactions.length === 0 && <p>No transactions match your search.</p>}
 
         {visibleTransactions.map((t) =>
@@ -400,7 +474,7 @@ export default function Dashboard() {
           ) : (
             <div key={t.id} className="txn-row">
               <div>
-                <strong style={{ color: t.type === 'income' ? '#2ed573' : '#ff4757' }}>
+                <strong style={{ color: t.type === 'income' ? POSITIVE : NEGATIVE }}>
                   {t.type === 'income' ? '+' : '-'}{formatMoney(Number(t.amount), t.currency)}
                 </strong>{' '}
                 {t.currency !== homeCurrency && (
