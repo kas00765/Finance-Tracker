@@ -8,6 +8,7 @@ import Settings from './pages/Settings.jsx';
 import Budgets from './pages/Budgets.jsx';
 import Navbar from './components/Navbar.jsx';
 import { api } from './api.js';
+import { clearSession, SESSION_EXPIRED } from './utils/session.js';
 
 export const AuthContext = createContext(null);
 export function useAuth() {
@@ -23,6 +24,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [homeCurrency, setHomeCurrency] = useState('USD');
   const [loading, setLoading] = useState(true);
+  const [sessionError, setSessionError] = useState('');
+  const [retry, setRetry] = useState(0);
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
 
   useEffect(() => {
@@ -34,38 +37,57 @@ export default function App() {
     setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
   }
 
-  const refreshProfile = useCallback(async () => {
-    try {
-      const me = await api.getMe();
-      setHomeCurrency(me.home_currency);
-    } catch {
-      // not logged in yet, or request failed — dashboard/settings will surface real errors
-    }
+  const logout = useCallback(() => {
+    clearSession();
+    setUser(null);
+    setHomeCurrency('USD');
+    setSessionError('');
   }, []);
 
   useEffect(() => {
-    const stored = localStorage.getItem('user');
-    if (stored) {
-      setUser(JSON.parse(stored));
-      refreshProfile();
+    window.addEventListener(SESSION_EXPIRED, logout);
+    return () => window.removeEventListener(SESSION_EXPIRED, logout);
+  }, [logout]);
+
+  useEffect(() => {
+    let active = true;
+    const token = localStorage.getItem('token');
+    setSessionError('');
+    if (!token) {
+      clearSession();
+      setLoading(false);
+      return;
     }
-    setLoading(false);
-  }, [refreshProfile]);
+    setLoading(true);
+    api.getMe().then((me) => {
+      if (!active || localStorage.getItem('token') !== token) return;
+      setUser(me);
+      setHomeCurrency(me.home_currency);
+      localStorage.setItem('user', JSON.stringify(me));
+    }).catch((err) => {
+      if (active && err.status !== 401 && localStorage.getItem('token') === token) {
+        setSessionError('Could not check your session. Please try again.');
+      }
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [retry]);
 
   function login(userData, token) {
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
-    refreshProfile();
+    setHomeCurrency(userData.home_currency || 'USD');
+    setSessionError('');
   }
 
-  function logout() {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setUser(null);
-  }
-
-  if (loading) return null;
+  if (loading) return <div className="container" role="status">Checking your session…</div>;
+  if (sessionError) return (
+    <div className="container">
+      <p role="alert">{sessionError}</p>
+      <button onClick={() => setRetry((value) => value + 1)}>Retry</button>
+      <button onClick={logout}>Sign out</button>
+    </div>
+  );
 
   return (
     <AuthContext.Provider value={{ user, login, logout, homeCurrency, setHomeCurrency, theme, toggleTheme }}>

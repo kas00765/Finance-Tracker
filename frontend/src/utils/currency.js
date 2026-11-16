@@ -25,6 +25,11 @@ export async function fetchRates(homeCurrency) {
 
 // Converts an amount in `fromCurrency` into `toCurrency`, given a rates object
 // shaped like { base: toCurrency, rates: { [otherCurrency]: rateFromBase } }.
+export function hasRatesFor(currencies, toCurrency, ratesData) {
+  return currencies.every((currency) => currency === toCurrency ||
+    (ratesData?.base === toCurrency && Number.isFinite(ratesData.rates?.[currency]) && ratesData.rates[currency] > 0));
+}
+
 export function convertAmount(amount, fromCurrency, toCurrency, ratesData) {
   if (!ratesData || fromCurrency === toCurrency) return amount;
   const rate = ratesData.rates[fromCurrency];

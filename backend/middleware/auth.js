@@ -13,6 +13,9 @@ export function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
+    if (!Number.isInteger(payload.userId) || payload.userId <= 0) {
+      return res.status(401).json({ error: 'Invalid session' });
+    }
     req.userId = payload.userId;
     next();
   } catch (err) {

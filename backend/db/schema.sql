@@ -37,3 +37,5 @@ CREATE TABLE IF NOT EXISTS budgets (
   amount NUMERIC(12, 2) NOT NULL,
   UNIQUE(user_id, category_id, month)
 );
+
+-- Apply migration_integrity.sql after this schema, including on fresh installs.
