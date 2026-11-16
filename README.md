@@ -18,6 +18,7 @@ Create a Postgres database, then run the schema:
 ```bash
 createdb finance_tracker
 psql -d finance_tracker -f backend/db/schema.sql
+psql -d finance_tracker -f backend/db/migration_integrity.sql
 ```
 
 ### 2. Backend
@@ -49,16 +50,33 @@ Runs on http://localhost:5173 and proxies `/api` calls to the backend.
 - [x] Dark/light theme toggle (dark navy by default), hover animations, smoother transitions throughout
 
 ## If you already had the app running (upgrading)
-Run both migrations against your existing database (safe to run even with existing data):
+Run these migrations in order against your existing database before starting the updated backend (safe to rerun):
 ```bash
 psql -d finance_tracker -f backend/db/migration_currency.sql
 psql -d finance_tracker -f backend/db/migration_budgets.sql
+psql -d finance_tracker -f backend/db/migration_integrity.sql
 ```
-No other setup changes — same `npm install` / `npm run dev` steps as before. If you're only picking up the dashboard-card update from before (not budgets/dark-mode/edit-in-place), just the currency migration is enough.
+The integrity migration records each budget's currency, adds category ownership constraints, and checks transaction amounts, budget amounts, and budget months. Existing budgets are assigned their owner's **current home currency** because the old schema did not save their original currency. Review those budgets if you changed your home currency previously; the original currency cannot be recovered automatically. New budgets retain their saved currency when home currency changes, and the Budgets page converts both limits and spending for comparison. Editing a budget displays its original amount and currency.
+
+Existing rows are preserved. New check and ownership constraints are added as `NOT VALID`: they protect new writes without rejecting the migration for unrelated legacy data. Audit and correct legacy invalid amounts, months, or category links before validating those constraints. The migration does not apply exchange rates or rewrite historical amounts.
+
+## Verification
+
+Use Node.js 24 and run:
+```bash
+cd backend
+npm ci
+npm test
+cd ../frontend
+npm ci
+npm test
+npm run build
+```
+Backend tests run the Express routes against a temporary in-memory PostgreSQL engine (PGlite), including actual constraints, migrations, and signup rollback. They do not connect to your configured database. Frontend tests cover expired sessions, request races, retryable failures, and budget currency conversion. GitHub Actions runs both suites and the frontend build on pushes and pull requests.
 
 ## Not built yet (your next steps)
 - Deployment (Vercel for frontend, Render/Railway for backend + DB)
 - CSV export, recurring transactions (stretch goals)
 
 ## A note on getting it running
-This was scaffolded without the ability to run `npm install` or start a live server, so you'll want to run it locally and work through any first-run errors (missing dependency versions, Postgres connection issues, etc.) — that debugging is normal and a good learning step. If you hit an error, paste it back to me and I'll help you fix it.
+Running the app requires a PostgreSQL database, the schema/migrations above, and backend environment variables. Currency conversion uses the Frankfurter API. The regression tests use an isolated database and mocked network responses; they do not require your database or exchange-rate service.

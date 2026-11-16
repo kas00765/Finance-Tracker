@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../App.jsx';
-import { fetchRates, convertAmount, formatMoney } from '../utils/currency.js';
+import { SUPPORTED_CURRENCIES, fetchRates, convertAmount, formatMoney, hasRatesFor } from '../utils/currency.js';
 
 function currentMonth() {
   return new Date().toISOString().slice(0, 7); // 'YYYY-MM'
@@ -25,6 +25,11 @@ export default function Budgets() {
 
   const [editingCategoryId, setEditingCategoryId] = useState('');
   const [editAmount, setEditAmount] = useState('');
+  const [editCurrency, setEditCurrency] = useState(homeCurrency);
+  const ratesReady = rates?.base === homeCurrency && hasRatesFor(
+    [...budgets.map((budget) => budget.currency), ...transactions.map((transaction) => transaction.currency)],
+    homeCurrency, rates,
+  );
 
   async function load() {
     setError('');
@@ -52,6 +57,7 @@ export default function Budgets() {
 
   const spendByCategory = useMemo(() => {
     const map = {};
+    if (!ratesReady) return map;
     transactions
       .filter((t) => t.type === 'expense')
       .forEach((t) => {
@@ -59,17 +65,18 @@ export default function Budgets() {
         map[t.category_id] = (map[t.category_id] || 0) + converted;
       });
     return map;
-  }, [transactions, rates, homeCurrency]);
+  }, [transactions, rates, homeCurrency, ratesReady]);
 
-  function startEdit(categoryId, existingAmount) {
+  function startEdit(categoryId, existingAmount, existingCurrency) {
     setEditingCategoryId(categoryId);
     setEditAmount(existingAmount ?? '');
+    setEditCurrency(existingCurrency || homeCurrency);
   }
 
   async function handleSave(categoryId) {
     setError('');
     try {
-      await api.saveBudget(categoryId, month, parseFloat(editAmount));
+      await api.saveBudget(categoryId, month, editAmount, editCurrency);
       setEditingCategoryId('');
       await load();
     } catch (err) {
@@ -97,8 +104,8 @@ export default function Budgets() {
     .map((c) => {
       const budget = budgets.find((b) => b.category_id === c.id);
       const spent = spendByCategory[c.id] || 0;
-      const limit = budget ? Number(budget.amount) : null;
-      const pct = limit ? Math.min((spent / limit) * 100, 100) : 0;
+      const limit = budget && ratesReady ? convertAmount(Number(budget.amount), budget.currency, homeCurrency, rates) : null;
+      const pct = limit ? Math.min((spent / limit) * 100, 100) : (limit === 0 && spent > 0 ? 100 : 0);
       const over = limit !== null && spent > limit;
       return { category: c, budget, spent, limit, pct, over };
     });
@@ -112,7 +119,7 @@ export default function Budgets() {
       <div className="card">
         <h3>Monthly budgets</h3>
         <p className="txn-meta">
-          Set a spending limit per category for a given month. Progress bars compare it against what you've actually spent (converted to {homeCurrency}).
+          Set a spending limit per category for a given month. Limits keep their saved currency; limits and spending are converted to {homeCurrency} for comparison.
         </p>
         <div className="row">
           <label className="txn-meta">
@@ -120,9 +127,12 @@ export default function Budgets() {
           </label>
         </div>
         {error && <p className="error" style={{ marginTop: '0.6rem' }}>{error}</p>}
+        {rates?.base === homeCurrency && !ratesReady && (
+          <p className="error" role="alert">Exchange rates are unavailable for a saved currency. Budget comparisons cannot be displayed.</p>
+        )}
       </div>
 
-      {rows.map(({ category, budget, spent, limit, pct, over }) => (
+      {ratesReady && rows.map(({ category, budget, spent, limit, pct, over }) => (
         <div key={category.id} className="card">
           <div className="row between">
             <strong>{category.name}</strong>
@@ -149,15 +159,18 @@ export default function Budgets() {
             {editingCategoryId === category.id ? (
               <>
                 <input
-                  type="number" step="0.01" placeholder="Budget amount" value={editAmount}
+                  type="number" min="0" step="0.01" aria-label="Budget amount" placeholder="Budget amount" value={editAmount}
                   onChange={(e) => setEditAmount(e.target.value)} style={{ width: 140 }}
                 />
+                <select aria-label="Budget currency" value={editCurrency} onChange={(e) => setEditCurrency(e.target.value)}>
+                  {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
+                </select>
                 <button className="btn-small" onClick={() => handleSave(category.id)}>Save</button>
                 <button className="btn-small btn-secondary" onClick={() => setEditingCategoryId('')}>Cancel</button>
               </>
             ) : (
               <>
-                <button className="btn-small btn-secondary" onClick={() => startEdit(category.id, budget?.amount)}>
+                <button className="btn-small btn-secondary" onClick={() => startEdit(category.id, budget?.amount, budget?.currency)}>
                   {limit !== null ? 'Edit budget' : 'Set budget'}
                 </button>
                 {budget && (
