@@ -1,14 +1,16 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useState, useEffect, createContext, useContext, useCallback } from 'react';
-import Login from './pages/Login.jsx';
-import Signup from './pages/Signup.jsx';
-import Dashboard from './pages/Dashboard.jsx';
-import Reports from './pages/Reports.jsx';
-import Settings from './pages/Settings.jsx';
-import Budgets from './pages/Budgets.jsx';
+import { useState, useEffect, createContext, useContext, useCallback, lazy, Suspense } from 'react';
 import Navbar from './components/Navbar.jsx';
 import { api } from './api.js';
 import { clearSession, SESSION_EXPIRED } from './utils/session.js';
+import { Loading } from './components/Feedback.jsx';
+
+const Login = lazy(() => import('./pages/Login.jsx'));
+const Signup = lazy(() => import('./pages/Signup.jsx'));
+const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
+const Reports = lazy(() => import('./pages/Reports.jsx'));
+const Settings = lazy(() => import('./pages/Settings.jsx'));
+const Budgets = lazy(() => import('./pages/Budgets.jsx'));
 
 export const AuthContext = createContext(null);
 export function useAuth() {
@@ -59,17 +61,25 @@ export default function App() {
       return;
     }
     setLoading(true);
-    api.getMe().then((me) => {
-      if (!active || localStorage.getItem('token') !== token) return;
-      setUser(me);
-      setHomeCurrency(me.home_currency);
-      localStorage.setItem('user', JSON.stringify(me));
-    }).catch((err) => {
-      if (active && err.status !== 401 && localStorage.getItem('token') === token) {
-        setSessionError('Could not check your session. Please try again.');
-      }
-    }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    api
+      .getMe()
+      .then((me) => {
+        if (!active || localStorage.getItem('token') !== token) return;
+        setUser(me);
+        setHomeCurrency(me.home_currency);
+        localStorage.setItem('user', JSON.stringify(me));
+      })
+      .catch((err) => {
+        if (active && err.status !== 401 && localStorage.getItem('token') === token) {
+          setSessionError('Could not check your session. Please try again.');
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [retry]);
 
   function login(userData, token) {
@@ -80,56 +90,70 @@ export default function App() {
     setSessionError('');
   }
 
-  if (loading) return <div className="container" role="status">Checking your session…</div>;
-  if (sessionError) return (
-    <div className="container">
-      <p role="alert">{sessionError}</p>
-      <button onClick={() => setRetry((value) => value + 1)}>Retry</button>
-      <button onClick={logout}>Sign out</button>
-    </div>
-  );
+  if (loading)
+    return (
+      <div className="container standalone">
+        <Loading label="Checking your session…" />
+      </div>
+    );
+  if (sessionError)
+    return (
+      <div className="container standalone">
+        <p role="alert">{sessionError}</p>
+        <button onClick={() => setRetry((value) => value + 1)}>Retry</button>
+        <button onClick={logout}>Sign out</button>
+      </div>
+    );
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, homeCurrency, setHomeCurrency, theme, toggleTheme }}>
+    <AuthContext.Provider
+      value={{ user, login, logout, homeCurrency, setHomeCurrency, theme, toggleTheme }}
+    >
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       <Navbar />
-      <div className="container">
-        <Routes>
-          <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
-          <Route path="/signup" element={user ? <Navigate to="/" /> : <Signup />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/reports"
-            element={
-              <ProtectedRoute>
-                <Reports />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/budgets"
-            element={
-              <ProtectedRoute>
-                <Budgets />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute>
-                <Settings />
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
-      </div>
+      <main className="container" id="main-content" tabIndex={-1}>
+        <Suspense fallback={<Loading label="Loading page…" />}>
+          <Routes>
+            <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
+            <Route path="/signup" element={user ? <Navigate to="/" /> : <Signup />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/reports"
+              element={
+                <ProtectedRoute>
+                  <Reports />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/budgets"
+              element={
+                <ProtectedRoute>
+                  <Budgets />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute>
+                  <Settings />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
+      </main>
     </AuthContext.Provider>
   );
 }

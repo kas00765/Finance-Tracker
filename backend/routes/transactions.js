@@ -32,11 +32,12 @@ router.get('/', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT t.*, c.name AS category_name
+      `SELECT t.id, t.user_id, t.category_id, t.amount, t.currency, t.type, t.note, t.created_at,
+              to_char(t.transaction_date, 'YYYY-MM-DD') AS transaction_date, c.name AS category_name
        FROM transactions t
        LEFT JOIN categories c ON t.category_id = c.id AND c.user_id = t.user_id
        WHERE ${conditions.join(' AND ')}
-       ORDER BY transaction_date DESC, t.id DESC`,
+       ORDER BY t.transaction_date DESC, t.id DESC`,
       params
     );
     res.json(result.rows);
@@ -59,7 +60,8 @@ router.post('/', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO transactions (user_id, category_id, amount, currency, type, note, transaction_date)
        VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, CURRENT_DATE))
-       RETURNING *`,
+       RETURNING id, user_id, category_id, amount, currency, type, note, created_at,
+                 to_char(transaction_date, 'YYYY-MM-DD') AS transaction_date`,
       [req.userId, categoryId || null, amount, currency || 'USD', type, note || null, date || null]
     );
     res.status(201).json(result.rows[0]);
@@ -88,7 +90,8 @@ router.put('/:id', async (req, res) => {
            transaction_date = COALESCE($5, transaction_date),
            currency = COALESCE($8, currency)
        WHERE id = $6 AND user_id = $7
-       RETURNING *`,
+       RETURNING id, user_id, category_id, amount, currency, type, note, created_at,
+                 to_char(transaction_date, 'YYYY-MM-DD') AS transaction_date`,
       [amount, type, categoryId ?? null, note ?? null, date, req.params.id, req.userId, currency ?? null,
         'categoryId' in req.body, 'note' in req.body]
     );

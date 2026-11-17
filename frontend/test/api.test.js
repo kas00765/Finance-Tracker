@@ -5,7 +5,10 @@ import { SESSION_EXPIRED } from '../src/utils/session.js';
 import { convertAmount, hasRatesFor } from '../src/utils/currency.js';
 
 beforeEach((t) => {
-  const values = new Map([['token', 'current-token'], ['user', '{malformed legacy data']]);
+  const values = new Map([
+    ['token', 'current-token'],
+    ['user', '{malformed legacy data'],
+  ]);
   function stubGlobal(name, value) {
     const original = Object.getOwnPropertyDescriptor(globalThis, name);
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
@@ -25,7 +28,11 @@ beforeEach((t) => {
 test('authenticated 401 clears stored credentials and notifies the UI once', async (t) => {
   let expired = 0;
   window.addEventListener(SESSION_EXPIRED, () => expired++);
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ error: 'Expired' }), { status: 401 }));
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async () => new Response(JSON.stringify({ error: 'Expired' }), { status: 401 }),
+  );
   await assert.rejects(api.getMe(), { status: 401 });
   assert.equal(localStorage.getItem('token'), null);
   assert.equal(localStorage.getItem('user'), null);
@@ -54,7 +61,9 @@ test('server and network failures preserve credentials for retry', async (t) => 
   t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 500 }));
   await assert.rejects(api.getMe(), { status: 500 });
   assert.equal(localStorage.getItem('token'), 'current-token');
-  t.mock.method(globalThis, 'fetch', async () => { throw new TypeError('Network unavailable'); });
+  t.mock.method(globalThis, 'fetch', async () => {
+    throw new TypeError('Network unavailable');
+  });
   await assert.rejects(api.getMe(), /Network unavailable/);
   assert.equal(localStorage.getItem('token'), 'current-token');
 });
@@ -62,7 +71,12 @@ test('server and network failures preserve credentials for retry', async (t) => 
 test('budget edits send the saved currency and decimal amount without rounding', async (t) => {
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(url, '/api/budgets');
-    assert.deepEqual(JSON.parse(options.body), { categoryId: 1, month: '2026-11', amount: '100.25', currency: 'USD' });
+    assert.deepEqual(JSON.parse(options.body), {
+      categoryId: 1,
+      month: '2026-11',
+      amount: '100.25',
+      currency: 'USD',
+    });
     return new Response('{}', { status: 201 });
   });
   await api.saveBudget(1, '2026-11', '100.25', 'USD');

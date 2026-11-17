@@ -72,6 +72,14 @@ test('transaction create and update reject another user’s category without wri
   assert.equal(rows[0].category_id, 1);
 });
 
+test('transaction dates remain calendar dates on create, list, and update', async () => {
+  const created = await request('/transactions', 'POST', { amount: 10, type: 'expense', date: '2026-01-01' });
+  assert.equal(created.body.transaction_date, '2026-01-01');
+  assert.equal((await request('/transactions')).body[0].transaction_date, '2026-01-01');
+  const updated = await request(`/transactions/${created.body.id}`, 'PUT', { date: '2024-02-29' });
+  assert.equal(updated.body.transaction_date, '2024-02-29');
+});
+
 test('partial transaction updates preserve omitted fields and can explicitly clear them', async () => {
   const created = await request('/transactions', 'POST', { amount: 12, type: 'expense', categoryId: 1, note: 'Keep me' });
   const updated = await request(`/transactions/${created.body.id}`, 'PUT', { amount: '18.25' });

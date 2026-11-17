@@ -51,6 +51,9 @@ export const api = {
     request('/users/me', { method: 'PUT', body: JSON.stringify({ homeCurrency }) }),
   getBudgets: (month) => request(`/budgets${month ? `?month=${month}` : ''}`),
   saveBudget: (categoryId, month, amount, currency) =>
-    request('/budgets', { method: 'POST', body: JSON.stringify({ categoryId, month, amount, currency }) }),
+    request('/budgets', {
+      method: 'POST',
+      body: JSON.stringify({ categoryId, month, amount, currency }),
+    }),
   deleteBudget: (id) => request(`/budgets/${id}`, { method: 'DELETE' }),
 };
