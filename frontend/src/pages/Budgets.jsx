@@ -1,191 +1,296 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Target, Wallet, AlertCircle, Plus } from 'lucide-react';
 import { api } from '../api.js';
-import { useAuth } from '../App.jsx';
-import { SUPPORTED_CURRENCIES, fetchRates, convertAmount, formatMoney, hasRatesFor } from '../utils/currency.js';
-
-function currentMonth() {
-  return new Date().toISOString().slice(0, 7); // 'YYYY-MM'
-}
-
-// Returns the actual last calendar day of a 'YYYY-MM' month (28-31), since
-// not every month has 31 days and Postgres rejects e.g. '2026-09-31'.
-function lastDayOfMonth(monthStr) {
-  const [year, month] = monthStr.split('-').map(Number);
-  return new Date(year, month, 0).getDate();
-}
+import { useFinanceData } from '../hooks/useFinanceData.js';
+import { SUPPORTED_CURRENCIES, convertAmount, formatMoney } from '../utils/currency.js';
+import { budgetStatus, localDate, monthRange } from '../utils/finance.js';
+import { EmptyState, ErrorNotice, Loading, RateNotice, Stat } from '../components/Feedback.jsx';
+import Modal, { ConfirmDialog } from '../components/Modal.jsx';
 
 export default function Budgets() {
-  const { homeCurrency } = useAuth();
-  const [month, setMonth] = useState(currentMonth());
-  const [categories, setCategories] = useState([]);
-  const [budgets, setBudgets] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [rates, setRates] = useState(null);
-  const [error, setError] = useState('');
-
-  const [editingCategoryId, setEditingCategoryId] = useState('');
-  const [editAmount, setEditAmount] = useState('');
-  const [editCurrency, setEditCurrency] = useState(homeCurrency);
-  const ratesReady = rates?.base === homeCurrency && hasRatesFor(
-    [...budgets.map((budget) => budget.currency), ...transactions.map((transaction) => transaction.currency)],
-    homeCurrency, rates,
+  const [month, setMonth] = useState(() => localDate().slice(0, 7));
+  const { data, loading, error, reload, retryRates, homeCurrency } = useFinanceData(
+    monthRange(month),
+    month,
   );
-
-  async function load() {
-    setError('');
-    try {
-      const [cats, budgetData, rateData] = await Promise.all([
-        api.getCategories(),
-        api.getBudgets(month),
-        fetchRates(homeCurrency),
-      ]);
-      setCategories(cats);
-      setBudgets(budgetData);
-      setRates(rateData);
-      const lastDay = String(lastDayOfMonth(month)).padStart(2, '0');
-      const txns = await api.getTransactions({ from: `${month}-01`, to: `${month}-${lastDay}` });
-      setTransactions(txns);
-    } catch (err) {
-      setError(err.message);
+  const [editor, setEditor] = useState(null),
+    [deleting, setDeleting] = useState(null);
+  const [amount, setAmount] = useState(''),
+    [currency, setCurrency] = useState(homeCurrency);
+  const [busy, setBusy] = useState(false),
+    [actionError, setActionError] = useState(''),
+    [message, setMessage] = useState('');
+  const pending = useRef(false);
+  const money = (value) => formatMoney(value, homeCurrency);
+  const spentByCategory = new Map();
+  if (data?.canConvert)
+    for (const t of data.transactions) {
+      if (t.type === 'expense')
+        spentByCategory.set(
+          t.category_id,
+          (spentByCategory.get(t.category_id) || 0) + t.convertedAmount,
+        );
     }
-  }
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, homeCurrency]);
-
-  const spendByCategory = useMemo(() => {
-    const map = {};
-    if (!ratesReady) return map;
-    transactions
-      .filter((t) => t.type === 'expense')
-      .forEach((t) => {
-        const converted = convertAmount(Number(t.amount), t.currency, homeCurrency, rates);
-        map[t.category_id] = (map[t.category_id] || 0) + converted;
-      });
-    return map;
-  }, [transactions, rates, homeCurrency, ratesReady]);
-
-  function startEdit(categoryId, existingAmount, existingCurrency) {
-    setEditingCategoryId(categoryId);
-    setEditAmount(existingAmount ?? '');
-    setEditCurrency(existingCurrency || homeCurrency);
-  }
-
-  async function handleSave(categoryId) {
-    setError('');
-    try {
-      await api.saveBudget(categoryId, month, editAmount, editCurrency);
-      setEditingCategoryId('');
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleDelete(budgetId) {
-    try {
-      await api.deleteBudget(budgetId);
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  const rows = [...categories]
-    .sort((a, b) => {
-      const aOther = a.name.toLowerCase() === 'other';
-      const bOther = b.name.toLowerCase() === 'other';
-      if (aOther && !bOther) return 1;
-      if (bOther && !aOther) return -1;
-      return a.name.localeCompare(b.name);
+  const rows = (data?.categories || [])
+    .map((category) => {
+      const budget = data.budgets.find((b) => b.category_id === category.id);
+      const spent = spentByCategory.get(category.id) || 0;
+      const limit =
+        budget && data.canConvert
+          ? convertAmount(Number(budget.amount), budget.currency, homeCurrency, data.rates)
+          : null;
+      return { category, budget, spent, limit, status: budgetStatus(spent, limit) };
     })
-    .map((c) => {
-      const budget = budgets.find((b) => b.category_id === c.id);
-      const spent = spendByCategory[c.id] || 0;
-      const limit = budget && ratesReady ? convertAmount(Number(budget.amount), budget.currency, homeCurrency, rates) : null;
-      const pct = limit ? Math.min((spent / limit) * 100, 100) : (limit === 0 && spent > 0 ? 100 : 0);
-      const over = limit !== null && spent > limit;
-      return { category: c, budget, spent, limit, pct, over };
-    });
-
+    .sort(
+      (a, b) =>
+        Number(Boolean(b.budget)) - Number(Boolean(a.budget)) ||
+        a.category.name.localeCompare(b.category.name),
+    );
+  const planned = rows.reduce((sum, row) => sum + (row.limit || 0), 0);
+  const trackedSpending = rows.filter((row) => row.budget).reduce((sum, row) => sum + row.spent, 0);
+  const totalSpending = [...spentByCategory.values()].reduce((sum, value) => sum + value, 0);
+  const attention = rows.filter(
+    (row) => row.budget && ['warning', 'danger'].includes(row.status.tone),
+  ).length;
+  function edit(row) {
+    setEditor(row);
+    setAmount(row.budget?.amount ?? '');
+    setCurrency(row.budget?.currency || homeCurrency);
+    setActionError('');
+  }
+  async function mutate(action, success) {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setActionError('');
+    try {
+      await action();
+      setEditor(null);
+      setDeleting(null);
+      setMessage(success);
+      reload();
+    } catch (err) {
+      setActionError(err.message);
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Budgets</h1>
-        <p className="page-greeting">Set monthly limits per category and track your progress.</p>
-      </div>
-      <div className="card">
-        <h3>Monthly budgets</h3>
-        <p className="txn-meta">
-          Set a spending limit per category for a given month. Limits keep their saved currency; limits and spending are converted to {homeCurrency} for comparison.
-        </p>
-        <div className="row">
-          <label className="txn-meta">
-            Month <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-          </label>
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">MAKE ROOM FOR WHAT MATTERS</p>
+          <h1>Budgets</h1>
+          <p className="page-greeting">Set a plan. See what's left. Stay in control.</p>
         </div>
-        {error && <p className="error" style={{ marginTop: '0.6rem' }}>{error}</p>}
-        {rates?.base === homeCurrency && !ratesReady && (
-          <p className="error" role="alert">Exchange rates are unavailable for a saved currency. Budget comparisons cannot be displayed.</p>
-        )}
-      </div>
-
-      {ratesReady && rows.map(({ category, budget, spent, limit, pct, over }) => (
-        <div key={category.id} className="card">
-          <div className="row between">
-            <strong>{category.name}</strong>
-            <span className="txn-meta">
-              {formatMoney(spent, homeCurrency)}
-              {limit !== null && ` / ${formatMoney(limit, homeCurrency)}`}
-            </span>
+        <label className="month-control">
+          Budget month
+          <input
+            type="month"
+            aria-label="Budget month"
+            value={month}
+            onChange={(e) => {
+              if (monthRange(e.target.value)) {
+                setMonth(e.target.value);
+                setMessage('');
+              }
+            }}
+          />
+        </label>
+      </header>
+      {message && (
+        <p className="notice positive" role="status">
+          {message}
+        </p>
+      )}
+      {loading && <Loading label="Loading your budgets…" />}
+      <ErrorNotice message={error} onRetry={reload} />
+      {data && (
+        <>
+          <RateNotice data={data} onRetry={retryRates} />
+          <div className="stat-grid three">
+            <Stat
+              label="Total planned"
+              value={data.canConvert ? money(planned) : '—'}
+              detail={`${data.budgets.length} category limits`}
+              icon={Target}
+            />
+            <Stat
+              label="Remaining in plan"
+              value={data.canConvert ? money(planned - trackedSpending) : '—'}
+              detail="Across categories with a budget"
+              tone="featured"
+              icon={Wallet}
+            />
+            <Stat
+              label="Needs attention"
+              value={data.canConvert ? String(attention) : '—'}
+              detail="Categories at 80% or above"
+              icon={AlertCircle}
+            />
           </div>
-
-          {limit !== null && (
-            <div className="progress-bar">
-              <div
-                className="progress-bar-fill"
-                style={{
-                  width: `${pct}%`,
-                  background: over ? 'linear-gradient(135deg, #ff6b6b, #ee5253)' : 'linear-gradient(135deg, #4ade9a, #2ed573)',
-                }}
-              />
+          {data.canConvert && totalSpending > trackedSpending && (
+            <div className="notice warning">
+              <AlertCircle size={18} />
+              <span>
+                {money(totalSpending - trackedSpending)} spent outside your budgeted categories. Add
+                limits below to include those expenses in your plan.
+              </span>
             </div>
           )}
-          {over && <p className="error" style={{ marginTop: '0.4rem' }}>Over budget</p>}
-
-          <div className="row" style={{ marginTop: '0.75rem' }}>
-            {editingCategoryId === category.id ? (
-              <>
-                <input
-                  type="number" min="0" step="0.01" aria-label="Budget amount" placeholder="Budget amount" value={editAmount}
-                  onChange={(e) => setEditAmount(e.target.value)} style={{ width: 140 }}
-                />
-                <select aria-label="Budget currency" value={editCurrency} onChange={(e) => setEditCurrency(e.target.value)}>
-                  {SUPPORTED_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
-                </select>
-                <button className="btn-small" onClick={() => handleSave(category.id)}>Save</button>
-                <button className="btn-small btn-secondary" onClick={() => setEditingCategoryId('')}>Cancel</button>
-              </>
-            ) : (
-              <>
-                <button className="btn-small btn-secondary" onClick={() => startEdit(category.id, budget?.amount, budget?.currency)}>
-                  {limit !== null ? 'Edit budget' : 'Set budget'}
-                </button>
-                {budget && (
-                  <button className="btn-small btn-danger" onClick={() => handleDelete(budget.id)}>Remove</button>
-                )}
-              </>
-            )}
+          <div className="section-heading">
+            <h2>Category budgets</h2>
+            <span className="muted small">Comparisons in {homeCurrency}</span>
           </div>
-        </div>
-      ))}
-
-      {categories.length === 0 && (
-        <div className="card">
-          <p>No categories yet — add some on the Settings page first.</p>
-        </div>
+          {!rows.length ? (
+            <EmptyState
+              title="Start with a category"
+              description="Add categories in Settings, then set a monthly limit for each."
+            />
+          ) : (
+            <div className="budget-grid">
+              {rows.map((row) => (
+                <section className="card budget-card" key={row.category.id}>
+                  <div className="section-heading">
+                    <h3>{row.category.name}</h3>
+                    <span className={`badge ${data.canConvert ? row.status.tone : 'muted'}`}>
+                      {data.canConvert ? row.status.label : 'Rates unavailable'}
+                    </span>
+                  </div>
+                  <p className="budget-spent">
+                    {data.canConvert ? money(row.spent) : '—'}{' '}
+                    <span className="muted small">spent</span>
+                  </p>
+                  <p className="muted small">
+                    {row.budget
+                      ? `of ${formatMoney(Number(row.budget.amount), row.budget.currency)} planned${row.budget.currency !== homeCurrency && data.canConvert ? ` (≈ ${money(row.limit)})` : ''}`
+                      : 'No monthly limit set'}
+                  </p>
+                  {row.budget && data.canConvert && (
+                    <>
+                      <div
+                        className={`progress-bar ${row.status.tone}`}
+                        role="progressbar"
+                        aria-label={`${row.category.name} budget used`}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(row.status.percent)}
+                        aria-valuetext={`${money(row.spent)} spent of ${money(row.limit)}`}
+                      >
+                        <span style={{ width: `${row.status.percent}%` }} />
+                      </div>
+                      <p className={`small ${row.status.tone}`}>
+                        {row.status.remaining < 0
+                          ? `${money(-row.status.remaining)} over your limit`
+                          : `${money(row.status.remaining)} left to spend`}
+                      </p>
+                    </>
+                  )}
+                  <div className="budget-actions">
+                    <button className="btn-secondary btn-small" onClick={() => edit(row)}>
+                      {row.budget ? (
+                        'Edit budget'
+                      ) : (
+                        <>
+                          <Plus size={15} />
+                          Set budget
+                        </>
+                      )}
+                    </button>
+                    {row.budget && (
+                      <button
+                        className="text-button danger"
+                        aria-label={`Remove ${row.category.name} budget`}
+                        onClick={() => {
+                          setDeleting(row);
+                          setActionError('');
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+          <p className="footnote">
+            Need another category? <Link to="/settings">Manage categories</Link>. Saved limits keep
+            their original currency when your home currency changes.
+          </p>
+        </>
+      )}
+      {editor && (
+        <Modal
+          title={`${editor.budget ? 'Edit' : 'Set'} ${editor.category.name} budget`}
+          onClose={() => setEditor(null)}
+          busy={busy}
+        >
+          <p className="muted">Monthly spending limit for {month}.</p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              mutate(
+                () => api.saveBudget(editor.category.id, month, amount, currency),
+                'Budget saved.',
+              );
+            }}
+          >
+            <fieldset className="form-grid" disabled={busy}>
+              <label>
+                Budget amount
+                <input
+                  autoFocus
+                  type="number"
+                  min="0"
+                  max="9999999999.99"
+                  step="0.01"
+                  required
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+              </label>
+              <label>
+                Budget currency
+                <select
+                  aria-label="Budget currency"
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                >
+                  {SUPPORTED_CURRENCIES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.code}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </fieldset>
+            <ErrorNotice message={actionError} />
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={busy}
+                onClick={() => setEditor(null)}
+              >
+                Cancel
+              </button>
+              <button disabled={busy}>{busy ? 'Saving…' : 'Save budget'}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title={`Remove ${deleting.category.name} budget?`}
+          description="This removes the monthly limit. Your transactions will stay in place."
+          onClose={() => setDeleting(null)}
+          onConfirm={() => mutate(() => api.deleteBudget(deleting.budget.id), 'Budget removed.')}
+          busy={busy}
+          error={actionError}
+        />
       )}
     </div>
   );

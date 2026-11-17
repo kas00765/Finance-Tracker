@@ -40,7 +40,10 @@ export function getRangeDates(rangeKey) {
         startMonth += 12;
         startYear -= 1;
       }
-      return { from: toDateStr(startYear, startMonth, 1), to: toDateStr(y, m, lastDayOfMonth(y, m)) };
+      return {
+        from: toDateStr(startYear, startMonth, 1),
+        to: toDateStr(y, m, lastDayOfMonth(y, m)),
+      };
     }
     case 'this-year':
       return { from: `${y}-01-01`, to: `${y}-12-31` };

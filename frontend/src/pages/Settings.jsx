@@ -1,114 +1,177 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../App.jsx';
+import { useResource } from '../hooks/useResource.js';
 import { SUPPORTED_CURRENCIES } from '../utils/currency.js';
+import { EmptyState, ErrorNotice, Loading } from '../components/Feedback.jsx';
+import { ConfirmDialog } from '../components/Modal.jsx';
 
 export default function Settings() {
   const { homeCurrency, setHomeCurrency } = useAuth();
   const [selectedCurrency, setSelectedCurrency] = useState(homeCurrency);
-  const [savingCurrency, setSavingCurrency] = useState(false);
-  const [currencyMsg, setCurrencyMsg] = useState('');
-  const [error, setError] = useState('');
-
-  const [categories, setCategories] = useState([]);
-  const [newCategory, setNewCategory] = useState('');
-
+  const [busy, setBusy] = useState(''),
+    [message, setMessage] = useState(''),
+    [error, setError] = useState('');
+  const [newCategory, setNewCategory] = useState(''),
+    [deleting, setDeleting] = useState(null);
+  const pending = useRef(false);
+  const categories = useResource('categories', () => api.getCategories());
   useEffect(() => {
     setSelectedCurrency(homeCurrency);
   }, [homeCurrency]);
-
-  async function loadCategories() {
-    try {
-      const cats = await api.getCategories();
-      setCategories(cats);
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  useEffect(() => {
-    loadCategories();
-  }, []);
-
-  async function handleSaveCurrency(e) {
-    e.preventDefault();
+  async function save(action, work, success) {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(action);
+    setMessage('');
     setError('');
-    setCurrencyMsg('');
-    setSavingCurrency(true);
     try {
-      await api.updateHomeCurrency(selectedCurrency);
-      setHomeCurrency(selectedCurrency);
-      setCurrencyMsg('Home currency updated. Dashboard and reports now convert into ' + selectedCurrency + '.');
+      await work();
+      setMessage(success);
     } catch (err) {
       setError(err.message);
     } finally {
-      setSavingCurrency(false);
+      pending.current = false;
+      setBusy('');
     }
   }
-
-  async function handleAddCategory(e) {
-    e.preventDefault();
-    setError('');
-    if (!newCategory.trim()) return;
-    try {
-      await api.createCategory(newCategory.trim());
-      setNewCategory('');
-      await loadCategories();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleDeleteCategory(id) {
-    try {
-      await api.deleteCategory(id);
-      await loadCategories();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Settings</h1>
-        <p className="page-greeting">Manage your currency and categories.</p>
-      </div>
-      <div className="card">
-        <h3>Home currency</h3>
-        <p className="txn-meta">
-          All totals and charts on your Dashboard and Reports pages are converted into this currency using live exchange rates.
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">MAKE IT YOURS</p>
+          <h1>Settings</h1>
+          <p className="page-greeting">Your preferences, your way of organizing money.</p>
+        </div>
+      </header>
+      {message && (
+        <p className="notice positive" role="status">
+          {message}
         </p>
-        <form onSubmit={handleSaveCurrency} className="row">
-          <select value={selectedCurrency} onChange={(e) => setSelectedCurrency(e.target.value)}>
-            {SUPPORTED_CURRENCIES.map((c) => (
-              <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
-            ))}
-          </select>
-          <button type="submit" disabled={savingCurrency}>
-            {savingCurrency ? 'Saving…' : 'Save'}
-          </button>
-        </form>
-        {currencyMsg && <p className="success" style={{ marginTop: '0.6rem' }}>{currencyMsg}</p>}
+      )}
+      {!deleting && <ErrorNotice message={error} />}
+      <div className="settings-grid">
+        <section className="card">
+          <h2>Home currency</h2>
+          <p className="muted" style={{ marginTop: 12 }}>
+            Choose the currency used for summaries and charts. Transactions and budgets retain their
+            original currencies.
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              save(
+                'currency',
+                async () => {
+                  await api.updateHomeCurrency(selectedCurrency);
+                  setHomeCurrency(selectedCurrency);
+                },
+                'Home currency updated.',
+              );
+            }}
+          >
+            <label>
+              Display currency
+              <select
+                aria-label="Display currency"
+                value={selectedCurrency}
+                onChange={(e) => setSelectedCurrency(e.target.value)}
+                disabled={Boolean(busy)}
+              >
+                {SUPPORTED_CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.code} — {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              style={{ marginTop: 18 }}
+              disabled={Boolean(busy) || selectedCurrency === homeCurrency}
+            >
+              {busy === 'currency' ? 'Saving…' : 'Save currency'}
+            </button>
+          </form>
+        </section>
+        <section className="card">
+          <h2>Categories</h2>
+          <p className="muted" style={{ marginTop: 12 }}>
+            Organize transactions around the things you spend on.
+          </p>
+          <form
+            className="row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              save(
+                'category',
+                async () => {
+                  await api.createCategory(newCategory.trim());
+                  setNewCategory('');
+                  categories.reload();
+                },
+                'Category added.',
+              );
+            }}
+          >
+            <label className="sr-only" htmlFor="new-category">
+              New category name
+            </label>
+            <input
+              id="new-category"
+              placeholder="e.g. Health & wellness"
+              value={newCategory}
+              maxLength={100}
+              required
+              onChange={(e) => setNewCategory(e.target.value)}
+              disabled={Boolean(busy)}
+            />
+            <button disabled={Boolean(busy) || !newCategory.trim()}>
+              {busy === 'category' ? 'Adding…' : 'Add category'}
+            </button>
+          </form>
+          {categories.loading && <Loading label="Loading categories…" />}
+          <ErrorNotice message={categories.error} onRetry={categories.reload} />
+          {categories.data?.length === 0 && (
+            <EmptyState title="Your own categories" description="Add your first category above." />
+          )}
+          {categories.data?.map((c) => (
+            <div className="category-row" key={c.id}>
+              <span>{c.name}</span>
+              <button
+                className="text-button danger"
+                disabled={Boolean(busy)}
+                aria-label={`Delete ${c.name} category`}
+                onClick={() => {
+                  setDeleting(c);
+                  setError('');
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </section>
       </div>
-
-      <div className="card">
-        <h3>Categories</h3>
-        <form onSubmit={handleAddCategory} className="row" style={{ marginBottom: '0.75rem' }}>
-          <input
-            type="text" placeholder="New category name" value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-          />
-          <button type="submit">Add</button>
-        </form>
-        {categories.map((c) => (
-          <div key={c.id} className="txn-row">
-            <span>{c.name}{c.is_default && <span className="txn-meta"> · default</span>}</span>
-            <button onClick={() => handleDeleteCategory(c.id)} className="btn-danger">Delete</button>
-          </div>
-        ))}
-        {error && <p className="error" style={{ marginTop: '0.6rem' }}>{error}</p>}
-      </div>
+      {deleting && (
+        <ConfirmDialog
+          title={`Delete ${deleting.name}?`}
+          description="Transactions in this category will become uncategorized. Budgets for this category will also be removed."
+          onClose={() => setDeleting(null)}
+          onConfirm={() =>
+            save(
+              'delete',
+              async () => {
+                await api.deleteCategory(deleting.id);
+                setDeleting(null);
+                categories.reload();
+              },
+              'Category deleted.',
+            )
+          }
+          busy={Boolean(busy)}
+          error={error}
+        />
+      )}
     </div>
   );
 }
