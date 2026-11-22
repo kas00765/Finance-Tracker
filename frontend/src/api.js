@@ -42,6 +42,10 @@ export const api = {
   },
   createTransaction: (data) =>
     request('/transactions', { method: 'POST', body: JSON.stringify(data) }),
+  previewImport: (rows) =>
+    request('/transactions/import/preview', { method: 'POST', body: JSON.stringify({ rows }) }),
+  importTransactions: (rows) =>
+    request('/transactions/import', { method: 'POST', body: JSON.stringify({ rows }) }),
   updateTransaction: (id, data) =>
     request(`/transactions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteTransaction: (id) => request(`/transactions/${id}`, { method: 'DELETE' }),

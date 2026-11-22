@@ -1270,3 +1270,129 @@ tfoot {
   font-size: 10px;
   overflow-wrap: anywhere;
 }
+.import-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -12px 0 20px;
+}
+.import-modal {
+  width: min(780px, calc(100vw - 32px));
+}
+.import-step {
+  color: var(--accent);
+  font-size: 12px;
+  margin-bottom: 18px;
+}
+.import-upload {
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+.import-upload span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.import-upload input {
+  width: 100%;
+}
+.import-file {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.import-mapping {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.import-sample {
+  margin: 18px 0;
+  font-size: 12px;
+}
+.import-sample summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+.import-sample td {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.import-counts {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.import-select-all {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+.import-select-all input,
+.import-preview-row > input {
+  min-height: 18px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.import-preview-list {
+  max-height: 330px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+}
+.import-preview-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.import-preview-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.import-preview-row strong {
+  font-size: 12px;
+}
+.import-preview-row p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+.import-record-detail {
+  font-size: 12px;
+}
+.import-note {
+  white-space: pre-wrap;
+}
+.import-result {
+  text-align: center;
+  padding: 24px 12px;
+}
+.import-result > svg {
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+.import-result h3 {
+  margin-bottom: 12px;
+}
+@media (max-width: 640px) {
+  .import-mapping {
+    grid-template-columns: 1fr;
+  }
+  .import-modal .modal-actions {
+    flex-direction: column;
+  }
+  .import-file {
+    flex-direction: column;
+  }
+}

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from 'react';
 import { X } from 'lucide-react';
 
-export default function Modal({ title, onClose, busy = false, children }) {
+export default function Modal({ title, onClose, busy = false, children, className = '' }) {
   const dialog = useRef(null);
   const id = useId();
   useEffect(() => {
@@ -12,7 +12,7 @@ export default function Modal({ title, onClose, busy = false, children }) {
   return (
     <dialog
       ref={dialog}
-      className="modal"
+      className={`modal ${className}`}
       aria-labelledby={id}
       onCancel={(event) => {
         event.preventDefault();
