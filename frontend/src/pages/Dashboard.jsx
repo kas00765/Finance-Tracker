@@ -3,6 +3,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Download,
+  Upload,
   Plus,
   Search,
   Wallet,
@@ -24,6 +25,7 @@ const CashflowChart = lazy(() =>
   import('../components/FinanceCharts.jsx').then((module) => ({ default: module.CashflowChart })),
 );
 const PAGE_SIZE = 10;
+const CsvImport = lazy(() => import('../components/CsvImport.jsx'));
 
 export default function Dashboard() {
   const [range, setRange] = useState('this-month');
@@ -33,6 +35,7 @@ export default function Dashboard() {
   const [filters, setFilters] = useState({ search: '', type: '', category: '', sort: 'date-desc' });
   const [page, setPage] = useState(1);
   const [editor, setEditor] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [busy, setBusy] = useState(false),
     [actionError, setActionError] = useState(''),
@@ -123,6 +126,16 @@ export default function Dashboard() {
           </button>
         </div>
       </header>
+      <div className="import-toolbar">
+        <button
+          className="btn-secondary btn-small"
+          disabled={!data}
+          onClick={() => setImportOpen(true)}
+        >
+          <Upload size={16} />
+          Import CSV
+        </button>
+      </div>
       {message && (
         <div className="notice positive" role="status">
           {message}
@@ -442,6 +455,15 @@ export default function Dashboard() {
             </p>
           )}
         </>
+      )}
+      {importOpen && (
+        <Suspense fallback={<Loading label="Loading importer…" />}>
+          <CsvImport
+            homeCurrency={homeCurrency}
+            onClose={() => setImportOpen(false)}
+            onImported={reload}
+          />
+        </Suspense>
       )}
       {editor && data && (
         <TransactionForm

@@ -27,6 +27,7 @@ before(async () => {
   pool.query = (sql, params) => db.query(sql, params);
   pool.connect = async () => ({ query: (sql, params) => db.query(sql, params), release() {} });
   const app = express();
+  app.use('/transactions/import', express.json({ limit: '2mb' }));
   app.use(express.json());
   app.use('/auth', auth);
   app.use('/transactions', transactions);
@@ -209,4 +210,72 @@ test('migration backfills old budgets and can be rerun without changing stored c
   await db.exec("UPDATE users SET home_currency = 'GBP' WHERE id = 2");
   await db.exec(migration);
   assert.equal((await db.query('SELECT currency FROM budgets')).rows[0].currency, 'EUR');
+});
+
+const importRow = (extra = {}) => ({ amount: '12.50', type: 'expense', currency: 'USD', date: '2026-11-01', category: 'Food', note: 'Groceries', ...extra });
+
+test('import preview validates records and detects file duplicates without writing', async () => {
+  const result = await request('/transactions/import/preview', 'POST', { rows: [importRow(), importRow(), importRow({ date: '2026-02-30' }), importRow({ currency: 'ZZZ' })] });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.rows.map(r => r.status), ['ready', 'duplicate', 'invalid', 'invalid']);
+  assert.equal(result.body.rows[0].transaction.categoryId, 1);
+  assert.equal((await db.query('SELECT * FROM transactions')).rows.length, 0);
+});
+
+test('imports are account-scoped, skip exact matches, and recheck on commit', async () => {
+  const rows = [importRow(), importRow(), importRow({ currency: 'EUR' })];
+  const first = await request('/transactions/import', 'POST', { rows });
+  assert.equal(first.status, 201);
+  assert.deepEqual(first.body, { imported: 2, skipped: 1 });
+  const retry = await request('/transactions/import', 'POST', { rows });
+  assert.deepEqual(retry.body, { imported: 0, skipped: 3 });
+  const preview = await request('/transactions/import/preview', 'POST', { rows });
+  assert.ok(preview.body.rows.every(r => r.status === 'duplicate'));
+  const secondToken = jwt.sign({ userId: 2 }, process.env.JWT_SECRET);
+  const other = await request('/transactions/import', 'POST', { rows: [importRow({ category: '' })] }, secondToken);
+  assert.equal(other.body.imported, 1);
+  const fresh = importRow({ note: 'Created after preview' });
+  await request('/transactions/import/preview', 'POST', { rows: [fresh] });
+  await request('/transactions', 'POST', { ...fresh, categoryId: 1 });
+  assert.deepEqual((await request('/transactions/import', 'POST', { rows: [fresh] })).body, { imported: 0, skipped: 1 });
+});
+
+test('import rejects unknown, foreign, ambiguous, and direct-ID categories', async () => {
+  for (const extra of [{ category: 'Private category' }, { categoryId: 2 }, { category: 'Missing' }]) {
+    assert.equal((await request('/transactions/import', 'POST', { rows: [importRow(extra)] })).status, 400);
+  }
+  await db.query("INSERT INTO categories (user_id, name) VALUES (1, ' food ')");
+  assert.equal((await request('/transactions/import', 'POST', { rows: [importRow()] })).status, 400);
+  assert.equal((await db.query('SELECT * FROM transactions')).rows.length, 0);
+});
+
+test('invalid import batches never partially save, and dates and currencies are required', async () => {
+  for (const extra of [{ date: undefined }, { currency: undefined }, { amount: 0 }, { note: 'x'.repeat(2001) }]) {
+    const result = await request('/transactions/import', 'POST', { rows: [importRow(), importRow(extra)] });
+    assert.equal(result.status, 400);
+  }
+  for (const rows of [null, [], {}, Array(501).fill(importRow())]) {
+    assert.equal((await request('/transactions/import', 'POST', { rows })).status, 400);
+  }
+  assert.equal((await db.query('SELECT * FROM transactions')).rows.length, 0);
+});
+
+test('database failure rolls back the entire import and a retry succeeds', async () => {
+  await db.exec(`CREATE FUNCTION fail_import_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.note = 'fail' THEN RAISE EXCEPTION 'test import failure'; END IF; RETURN NEW; END $$;
+    CREATE TRIGGER fail_import_test BEFORE INSERT ON transactions FOR EACH ROW EXECUTE FUNCTION fail_import_test();`);
+  const rows = [importRow(), importRow({ note: 'fail' })];
+  try {
+    assert.equal((await request('/transactions/import', 'POST', { rows })).status, 500);
+    assert.equal((await db.query('SELECT * FROM transactions')).rows.length, 0);
+  } finally {
+    await db.exec('DROP TRIGGER fail_import_test ON transactions; DROP FUNCTION fail_import_test();');
+  }
+  assert.deepEqual((await request('/transactions/import', 'POST', { rows })).body, { imported: 2, skipped: 0 });
+});
+
+test('imports accept 500 records and require an authenticated account', async () => {
+  const rows = Array.from({ length: 500 }, (_, i) => importRow({ note: `Record ${i} ${"x".repeat(300)}` }));
+  assert.equal((await request('/transactions/import', 'POST', { rows }, 'invalid')).status, 401);
+  assert.deepEqual((await request('/transactions/import', 'POST', { rows })).body, { imported: 500, skipped: 0 });
 });

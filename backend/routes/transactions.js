@@ -2,9 +2,65 @@ import express from 'express';
 import { pool } from '../db/index.js';
 import { requireAuth } from '../middleware/auth.js';
 import { ownsCategory, transactionError, validId, validDate } from '../validation.js';
+import { importRequestError, prepareImport } from '../importTransactions.js';
 
 const router = express.Router();
 router.use(requireAuth);
+
+router.post('/import/preview', async (req, res) => {
+  const rows = req.body?.rows;
+  const error = importRequestError(rows);
+  if (error) return res.status(400).json({ error });
+  try {
+    res.json({ rows: await prepareImport(pool, req.userId, rows) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Could not preview this import. Please try again.' });
+  }
+});
+
+router.post('/import', async (req, res) => {
+  const rows = req.body?.rows;
+  const error = importRequestError(rows);
+  if (error) return res.status(400).json({ error });
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    // Serialize imports for this user so concurrent retries cannot both insert
+    // the same batch. Other users can import independently.
+    const user = await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [req.userId]);
+    if (!user.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(401).json({ error: 'Session user no longer exists' });
+    }
+    const plan = await prepareImport(client, req.userId, rows);
+    const invalid = plan.findIndex((row) => row.status === 'invalid');
+    if (invalid !== -1) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Row ${invalid + 1}: ${plan[invalid].error} Nothing was imported. Review the preview again.` });
+    }
+    const ready = plan.filter((row) => row.status === 'ready').map(({ transaction: t }) => ({
+      amount: t.amount, type: t.type, currency: t.currency, category_id: t.categoryId, note: t.note, date: t.date,
+    }));
+    if (ready.length) await client.query(
+      `INSERT INTO transactions (user_id, category_id, amount, currency, type, note, transaction_date)
+       SELECT $1, category_id, amount::numeric, currency, type, note, date::date
+       FROM jsonb_to_recordset($2::jsonb) AS r(category_id integer, amount text, currency text, type text, note text, date text)`,
+      [req.userId, JSON.stringify(ready)],
+    );
+    await client.query('COMMIT');
+    res.status(ready.length ? 201 : 200).json({ imported: ready.length, skipped: plan.length - ready.length });
+  } catch (err) {
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackError) { console.error(rollbackError); }
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Import could not be completed. Retry safely; matching transactions will be skipped.' });
+  } finally {
+    client?.release();
+  }
+});
 
 // GET /api/transactions?category=&from=&to=
 router.get('/', async (req, res) => {
